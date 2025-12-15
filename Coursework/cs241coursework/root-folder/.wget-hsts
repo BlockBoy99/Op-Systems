@@ -1,0 +1,5 @@
+# HSTS 1.0 Known Hosts database for GNU Wget.
+# Edit at your own risk.
+# <hostname>	<port>	<incl. subdomains>	<created>	<max-age>
+warwick.ac.uk	0	0	1764675402	31536000
+www.dcs.warwick.ac.uk	0	0	1764675401	31536000

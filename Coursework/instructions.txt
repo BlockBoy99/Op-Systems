@@ -1,0 +1,23 @@
+In podman:
+podman build -t alpinebuild .
+
+in cs241coursework:
+./run_container.sh
+
+In new terminal join previous container:
+podman exec -it -l /bin/bash
+
+go /root/workspace/skeleton/src then run
+make clean
+make
+/root/workspace/skeleton/build/idsniff -i eth0 -v 1
+
+/root/workspace/skeleton/build/idsniff -i lo -v 1
+
+for syn flood:
+hping3 -c 100 -d 120 -S -w 64 -p 80 -i u100 --rand-source localhost
+
+
+for blacklisted urls:
+wget --no-hsts www.google.co.uk
+wget --no-hsts www.facebook.com
