@@ -4,18 +4,62 @@
 #include <stdlib.h>
 #include <pcap.h>
 #include <netinet/if_ether.h>
+#include <pthread.h>
+#include <signal.h>
 
 #include "dispatch.h"
+#include "analysis.h"
+#include "queue.h"
+
+#define NUM_WORKERS 20 //define workers according to cores
+
+pthread_t workers[NUM_WORKERS];
+static volatile sig_atomic_t stop_flag = 0;
+static pcap_t *pcap_handle = NULL;
+
+//Worker thread loop function
+//continuously deques packets from shared queue
+// analyses them and frees from memory when done
+//closes when dequeu_packet() returns False
+//so when shutdown initiated and queue is empty
+void *worker_loop(void *arg) {
+  struct pcap_pkthdr hdr;
+  u_char *pkt;
+  int verbose;
+
+  while (dequeue_packet(&hdr, &pkt, &verbose)) {
+      //; //dequeue packet
+      analyse(&hdr, pkt, verbose);          //analyse packet
+      free(pkt);                            //free the packet when done
+  }
+  return NULL;
+}
+//Signal handle for SIGINT Ctrl-C
+//set stops flag so threads stop and break pcap capture loop
+void handle_sigint(int sig) {
+    (void)sig;
+    stop_flag = 1;
+    if (pcap_handle) {
+        pcap_breakloop(pcap_handle); // safe
+    }
+}
 
 
 // Application main sniffing loop
 void sniff(char *interface, int verbose) {
-  
   char errbuf[PCAP_ERRBUF_SIZE];
+
+  signal(SIGINT, handle_sigint);
+  init_queue(); //initialises queue
+
+  // Start Intrusion Detection System
+  for (int i = 0; i < NUM_WORKERS; i++) {
+    pthread_create(&workers[i], NULL, worker_loop, NULL);
+  }
 
   // Open the specified network interface for packet capture. pcap_open_live() returns the handle to be used for the packet
   // capturing session. check the man page of pcap_open_live()
-  pcap_t *pcap_handle = pcap_open_live(interface, 4096, 1, 1000, errbuf);
+  pcap_handle = pcap_open_live(interface, 4096, 1, 1000, errbuf);
   if (pcap_handle == NULL) {
     fprintf(stderr, "Unable to open interface %s\n", errbuf);
     exit(EXIT_FAILURE);
@@ -24,37 +68,23 @@ void sniff(char *interface, int verbose) {
   }
   
   pcap_loop(pcap_handle, -1, dispatch, (u_char*) &verbose);
-  pcap_close(pcap_handle);
+
+
+  printf("\nStopping capture...\n");
   
-  //add back if don't work
-  // struct pcap_pkthdr header;
-  // const unsigned char *packet;
-
-  // // Capture packet one packet everytime the loop runs using pcap_next(). This is inefficient.
-  // // A more efficient way to capture packets is to use use pcap_loop() instead of pcap_next().
-  // // See the man pages of both pcap_loop() and pcap_next().
-
-  // while (1) {
-  //   // Capture a  packet
-  //   packet = pcap_next(pcap_handle, &header);
-  //   if (packet == NULL) {
-  //     // pcap_next can return null if no packet is seen within a timeout
-  //     if (verbose) {
-  //       printf("No packet received. %s\n", pcap_geterr(pcap_handle));
-  //     }
-  //   } else {
-  //     // If verbose is set to 1, dump raw packet to terminal
-  //     if (verbose) {
-  //       dump(packet, header.len);
-  //     }
-  //     // Dispatch packet for processing
-  //     dispatch(&header, packet, verbose);
-  //   }
-  // }
+  queue_shutdown();    //wake all worker threads
+  for (int i = 0; i < NUM_WORKERS; i++) { //join worker threads
+    pthread_join(workers[i], NULL);
+  }
+  // calls cleanup function in analysis.c#
+  analysis_cleanup();  
+  //close pcap
+  pcap_close(pcap_handle);
+  pcap_handle=NULL;
 }
 
 // Utility/Debugging method for dumping raw packet data
-void dump(const unsigned char *data, int length) {
+void dump(const unsigned char *data, int length) { //removed as only for debugging but can be easily called by adding code that if verbose, call dump
   unsigned int i;
   static unsigned long pcount = 0;
   // Decode Packet Header
@@ -90,6 +120,7 @@ void dump(const unsigned char *data, int length) {
     printf("Lowkey idk what type");
   }
   printf("\n === PACKET %ld DATA == \n", pcount);
+
   // Decode Packet Data (Skipping over the header)
   int data_bytes = length - ETH_HLEN;
   const unsigned char *payload = data + ETH_HLEN;
